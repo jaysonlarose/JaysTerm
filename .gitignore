@@ -1,3 +1,5 @@
 build
+dist
+JaysTerm.egg-info
 __pycache__
 *.pyc
