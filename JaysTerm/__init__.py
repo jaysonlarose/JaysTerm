@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-__version__ = "1.0"
+__version__ = "1.0.1"
 
 import sys
 #from threading import Thread, Event
@@ -634,7 +634,11 @@ class UpdatingLine:
 		DotPrinterSlots.release()
 		self.closed = True
 	def __del__(self):
-		self.close()
+		# This little "if" clause is here to prevent
+		# "ImportError: sys.meta_path is None, Python is likely shutting down"
+		# messages in multiprocessing environments.
+		if sys.meta_path is not None:
+			self.close()
 
 _DOT='▒'
 _DOT_EIGHTHS = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█']
