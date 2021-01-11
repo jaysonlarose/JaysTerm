@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 import sys
 #from threading import Thread, Event
@@ -823,7 +823,8 @@ class DotPrinter(object):
 		import jlib
 		self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotstart + 1 + self.dotsprinted)]))
 	def __del__(self):
-		self.close()
+		if sys.meta_path is not None:
+			self.close()
 
 # Note: You may be tempted to wrap EditingLine.poll() around a select() or
 # poll() object in order to cut down on busy sleeps... be sure to call
@@ -1246,7 +1247,8 @@ class EditingLine(object):
 		Term.disableCursor()
 		self.dotfile.flush()
 	def __del__(self):
-		self.close()
+		if sys.meta_path is not None:
+			self.close()
 
 class Interpreter(EditingLine):
 	def __init__(self, namespace=None, **kwargs):
