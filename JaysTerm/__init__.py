@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 import sys
 #from threading import Thread, Event
@@ -644,7 +644,7 @@ _DOT='▒'
 _DOT_EIGHTHS = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█']
 
 class DotPrinter(object):
-	def __init__(self, maxcount, showcount=False, label=None, countjustify=0, grouping=True, dotchar=_DOT, frac_dots=True, frac_dotchars=_DOT_EIGHTHS, colors=True, clear_on_close=False):
+	def __init__(self, maxcount, showcount=False, label=None, afterlabel=None, countjustify=0, grouping=True, dotchar=_DOT, frac_dots=True, frac_dotchars=_DOT_EIGHTHS, colors=True, clear_on_close=False):
 		locale.setlocale(locale.LC_ALL, locale.getdefaultlocale())
 		# currcount is used to track our progress.
 		self.currcount = 0
@@ -658,6 +658,7 @@ class DotPrinter(object):
 		self.showcount = showcount
 		# Label is also displayed if not None.
 		self.label = label
+		self.afterlabel = afterlabel
 		# The count display is justified to this many characters.
 		self.countjustify = countjustify
 		# If grouping is True, commas are put in the count display.
@@ -691,6 +692,10 @@ class DotPrinter(object):
 		cols, rows = Term.size
 		self.dotstart = 1
 		self.dotend = cols
+		if self.afterlabel is not None:
+			labelsize = len(" {}".format(self.afterlabel))
+			self.dotend -= labelsize
+
 		self.dotfile.write(jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']) + jlib.encapsulate_ansi('disable_line_wrap'))
 		if self.showcount:
 			maxcount_len = len(("{:n}" if self.grouping else "{}").format(self.maxcount))
@@ -707,6 +712,8 @@ class DotPrinter(object):
 			labelsize = len("{} ".format(self.label))
 			self.dotstart += labelsize
 			self.dotfile.write(self.label + ' ')
+		if self.afterlabel is not None:
+			self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotend + 1)]) + ' ' + self.afterlabel)
 		self.dotstoprint = self.dotend - self.dotstart - 1
 		if self.dotstoprint == 0:
 			# cop-out zero-div mitigation
