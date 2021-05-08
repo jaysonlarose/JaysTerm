@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 import sys
 #from threading import Thread, Event
@@ -241,7 +241,7 @@ class Term:# {{{
 	@classmethod
 	def getkey_advanced(cls, interruptable=True):
 		if cls.advanced_lut is None:
-			cls.advanced_lut = generate_terminal_code_lut()
+			cls.advanced_lut = generate_terminal_code_lut()[0]
 		if cls.advanced_pos is None:
 			cls.advanced_pos = cls.advanced_lut
 		key = cls.getkey(interruptable)
@@ -501,10 +501,24 @@ class DotPrinterSlots(object):
 		applications can still reliably be redirected. If you do not want
 		the message text to be sent to stdout, set the 'printfile' parameter
 		to False.
+
+		Note that this function is designed so that it's supposed to more-or-less
+		"do the right thing" if you replace your standard `print` statement with
+		it (or one of it's slot-based children), like:
+
+		global print
+		orig_print = print
+		print = JaysTerm.DotPrinterSlots.line
+
 		"""
 		import jlib
 		values = [ x if type(x) in StringTypes else str(x) for x in values ]
 		msg = sep.join(values)
+		# Make sure "file" goes to where it's supposed to go, if it's not
+		# stdout or stderr.
+		if file is not None and file is not sys.stdout and file is not sys.stderr:
+			file.write(msg + "\n")
+			return
 		if printfile:
 			print_fh = cls.printfile
 		else:
@@ -751,7 +765,7 @@ class DotPrinter(object):
 					to_print = self.frac_dotchars[self.dotchar]
 				if self.colors:
 					fgc = colorcalc(self.dotsprinted * color_step)
-					self.dotfile.write(self.fgfunc(fgc, to_print))
+					self.dotfile.write(str(self.fgfunc(fgc, to_print)))
 				else:
 					self.dotfile.write(to_print)
 				self.dotsprinted += 1
@@ -762,7 +776,7 @@ class DotPrinter(object):
 				if self.frac_dot_printed > -1:
 					if self.colors:
 						fgc = colorcalc(self.dotsprinted * color_step)
-						self.dotfile.write(self.fgfunc(fgc, self.frac_dotchars[self.frac_dot_printed]))
+						self.dotfile.write(str(self.fgfunc(fgc, self.frac_dotchars[self.frac_dot_printed])))
 					else:
 						self.dotfile.write(self.frac_dotchars[self.frac_dot_printed])
 		self.dotfile.write(jlib.encapsulate_ansi('enable_line_wrap'))
@@ -868,6 +882,14 @@ def count_significant_bits(byte):
 # Terminal-y input sequences:
 # (I'm lazy and don't want to build this out by hand, so we'll
 # parse it out if/when we need it...)
+
+# Note: some keys are missing from this list. This is purely because
+# X11 intercepts them in my current config:
+# * f11
+# * ctrl + f1
+# * ctrl + f2
+# * ctrl + f8
+# * ctrl + f12
 terminal_sequences = """
 * ESC [ A — up arrow
 * ESC [ B — down arrow
@@ -904,7 +926,7 @@ terminal_sequences = """
 * ESC [ 1 ; 6 A — shift +  ctrl + up arrow
 * ESC [ 1 ; 6 B — shift +  ctrl + down arrow
 * ESC [ 1 ; 6 C — shift +  ctrl + right arrow
-* ESC [ 1 ; 6 D — shift +  ctrl + left arrow
+* ESC [ 1 ; 6 D — shift +  ctrrl + left arrow
 * ESC [ 1 ; 7 C —  ctrl +  alt  + right arrow
 * ESC [ 1 ; 7 D —  ctrl +  alt  + left arrow
 * ESC [ 1 ; 8 C — shift +  ctrl +  alt + right arrow
@@ -938,6 +960,14 @@ terminal_sequences = """
 * ESC [ 2 0 ; 2 ~ — shift + f9
 * ESC [ 2 3 ; 2 ~ — shift + f11
 * ESC [ 2 4 ; 2 ~ — shift + f12
+* ESC [ 1 ; 5 R — ctrl + f3
+* ESC [ 1 ; 5 S — ctrl + f4
+* ESC [ 1 5 ; 5 ~ — ctrl + f5
+* ESC [ 1 7 ; 5 ~ — ctrl + f6
+* ESC [ 1 8 ; 5 ~ — ctrl + f7
+* ESC [ 2 0 ; 5 ~ — ctrl + f9
+* ESC [ 2 1 ; 5 ~ — ctrl + f10
+* ESC [ 2 3 ; 5 ~ — ctrl + f11
 * ESC [ 1 ; 6 P — shift +  ctrl + f1
 * ESC [ 1 ; 6 Q — shift +  ctrl + f2
 * ESC [ 1 ; 6 R — shift +  ctrl + f3
@@ -965,6 +995,7 @@ terminal_sequences = """
 """
 
 def generate_terminal_code_lut():
+	treelut = {}
 	lut = {}
 	lines = [ x.strip() for x in terminal_sequences.splitlines() if len(x.strip()) > 0 ]
 	for line in lines:
@@ -978,26 +1009,95 @@ def generate_terminal_code_lut():
 			frags.pop(0)
 		# Convert 'ESC' to an actual escape
 		frags = [ b'\x1b' if x == b'ESC' else x for x in frags ]
-		lutsegment = lut
+		branch = treelut
+		buf = b''
 		while len(frags) > 0:
 			frag = frags.pop(0)
+			buf += frag
 			if len(frags) > 0:
-				if frag not in lutsegment:
-					lutsegment[frag] = {}
-				lutsegment = lutsegment[frag]
+				if frag not in branch:
+					branch[frag] = {}
+				branch = branch[frag]
 			else:
-				lutsegment[frag] = keyspressed
-	return lut
+				branch[frag] = keyspressed
+		lut[buf] = keyspressed
+	return [treelut, lut]
 
 # * ESC <just about any character> -- alt + character
 #   * Yes, this DOES mean "alt + [, A" is the same as hitting the up arrow.
 
+class CursorPosition:
+	def __init__(self, row, col):
+		self.row = row
+		self.col = col
+	@classmethod
+	def from_match(cls, mat):
+		return cls(row=int(mat.group('row')), col=int(mat.group('col')))
+	def __repr__(self):
+		return "<CursorPosition row:{} col:{}>".format(self.row, self.col)
+
+class TerminalSequenceParser:
+	"""
+	This thing makes a somewhat competent attempt to handle terminal input.
+
+	Instantiate it, and feed your key data to it, as binary bytes() data,
+	one character at a time.
+
+	What you'll get back depends on the internal state:
+
+	* None — the parser encountered an escape character and is currently working voodoo.
+	       Continue to feed it characters until it comes back with something else, or
+		   call the abort() method to push the proverbial coin return button.
+	* bytes — if the parser couldn't figure out anything special to do with your input,
+	       it will return it as a bytes() object. Most of the time, you'll get a single
+		   character back, but expect multiple if the parser gave up.
+	* frozenset — anything parsed out of the terminal_sequences heap will get returned
+	       as a frozenset.
+	* something else — Special cases, such as the response to a "cursor position" request
+	       will get returned as some sort of object.
+	"""
+	def __init__(self):
+		import re
+		self.lut = generate_terminal_code_lut()[1]
+		# Note: Request cursor position by issuing "\x1b[?6n", not "\x1b[6n", as the reply from the latter
+		# command can mimic ctrl+f3 in certain cases.
+		self.patterns = [
+			[re.compile(b"^\x1b\[\?(?P<row>\d+);(?P<col>\d+);1R$"), lambda x: CursorPosition.from_match(x)],
+		]
+		self.buf = b''
+	def feed(self, char):
+		ret = char
+		if len(self.buf) < 1:
+			if char == b"\x1b":
+				self.buf += char
+				ret = None
+		else:
+			ret = None
+			self.buf += char
+			charval = ord(char)
+			if charval >= 48 and charval <= 57:
+				pass
+			elif char in b';[?':
+				pass
+			else:
+				ret = self.buf
+				self.buf = b''
+		if ret is not None and len(ret) > 1:
+			if ret in self.lut:
+				ret = self.lut[ret]
+			else:
+				for pat, act in self.patterns:
+					mat = pat.search(ret)
+					if mat:
+						ret = act(mat)
+		return ret
+		
 
 
 class EditingLine(object):
 	# Implementation notes:
 	# Internal buffers (escbuf, utf8buf, lastbyte, lastpoll) are bytes objects,
-	# as we need to retain and intepret escape characters, utf-8 fragments, and
+	# as we need to retain and interpret escape characters, utf-8 fragments, and
 	# the like. The history list, however, consists of strings, because we need
 	# to calculate lengths in terms of printable characters... and at the end
 	# of the day, that's also what the user cares about and expects.
@@ -1246,6 +1346,7 @@ class EditingLine(object):
 		DotPrinterSlots.lock()
 		DotPrinterSlots.deregister(self, msg)
 		DotPrinterSlots.release()
+		Term.revert()
 	def activation_cb(self):
 		self.position_cursor()
 		Term.enableCursor()
