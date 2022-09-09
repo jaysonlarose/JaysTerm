@@ -1324,6 +1324,9 @@ class EditingLine(object):
 					# Ignore linefeed character.
 					elif character == '\x0a':
 						return True
+					# Note to myself: Why the holy hell did I have to add this in all of a sudden?
+					elif character == '\x0d':
+						return True
 					else:
 						new_line = self.history[self.historypos][:self.cursorpos] + character + self.history[self.historypos][self.cursorpos:]
 						self.cursorpos += 1
