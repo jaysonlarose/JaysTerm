@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-__version__ = "1.0.5"
+__version__ = "1.0.6"
 
 import sys
 #from threading import Thread, Event
@@ -1358,8 +1358,9 @@ class EditingLine(object):
 		Term.disableCursor()
 		self.dotfile.flush()
 	def __del__(self):
-		if sys.meta_path is not None:
-			self.close()
+		pass
+		#if sys.meta_path is not None:
+		#	self.close()
 
 class Interpreter(EditingLine):
 	def __init__(self, namespace=None, **kwargs):
@@ -1464,18 +1465,3 @@ def Prompt(text, validchars): # {{{
 		sys.stderr.flush()
 	return gotchar
 # }}}
-
-if __name__ == "__main__":
-	import argparse
-	parser = argparse.ArgumentParser()
-	parser.add_argument('-g', '--getkey', action='store_true', dest='getkey', default=False)
-	args = parser.parse_args()
-
-	if args.getkey:
-		Term.init()
-		key = Term.getkey(interruptable=False)
-		print(key.decode())
-		sys.exit(0)
-
-	cols, rows = Term.getSize()
-	print("{}x{}".format(cols, rows))
