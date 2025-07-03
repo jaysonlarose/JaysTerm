@@ -12,5 +12,5 @@ setuptools.setup(
 	description  = "Jays' Terminal Handling Library",
 	download_url = f"https://github.com/jaysonlarose/JaysTerm/releases/download/{version}/JaysTerm-{version}.tar.gz",
 	packages     = ['JaysTerm'],
-	requires     = ['jlib'],
+	requires     = ['jlib', 'ansicolors', 'wcwidth'],
 )
