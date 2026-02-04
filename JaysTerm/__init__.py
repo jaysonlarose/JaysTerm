@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-__version__ = "1.0.7"
+__version__ = "1.0.8"
 
 import sys
 #from threading import Thread, Event
@@ -84,11 +84,20 @@ class Term:# {{{
 	# Initialization function.  For best results, call this
 	# before any other classmethods.
 	@classmethod
-	def init(cls):
+	def init(cls, stdin=sys.stdin, stdout=None, stderr=None):
 		if cls.fd is None:
 			signal.signal(signal.SIGWINCH, sigwinchHook)
 			cls.getSize()
-			cls.fd = sys.stdin.fileno()
+			cls.stdin  = stdin
+			if stdout is None:
+				cls.stdout = sys.stdout.buffer
+			else:
+				cls.stdout = stdout
+			if stderr is None:
+				cls.stderr = sys.stderr.buffer
+			else:
+				cls.stderr = stderr
+			cls.fd = stdin.fileno()
 			atexit.register(Term.cleanup)
 		if cls.origattrs is None:
 			try:
@@ -200,10 +209,10 @@ class Term:# {{{
 	@classmethod
 	def setCursor(cls, col, row, flush=True):
 		import jlib
-		sys.stderr.write(jlib.encapsulate_ansi('cursor_position', [ "{}".format(x) for x in [row, col] ]))
+		sys.stderr.buffer.write(jlib.encapsulate_ansi('cursor_position', [ "{}".format(x) for x in [row, col] ]).encode())
 
 		if flush:
-			sys.stderr.flush()
+			sys.stderr.buffer.flush()
 	# Get one character from stdin.
 	# Set interruptable=false if you don't want ^C to work.
 	# By default, calling this blocks until a key is pressed. This behavior
@@ -270,10 +279,10 @@ class Term:# {{{
 	@classmethod
 	def clearLine(cls, flush=True):
 		import jlib
-		sys.stderr.write(jlib.encapsulate_ansi('erase_line'))
-		sys.stderr.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']))
+		sys.stderr.buffer.write(jlib.encapsulate_ansi('erase_line').encode())
+		sys.stderr.buffer.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']).encode())
 		if flush:
-			sys.stderr.flush()
+			sys.stderr.buffer.flush()
 
 	# originally from stackoverflow.com
 	# Poll the controlling terminal for its dimensions.
@@ -388,18 +397,21 @@ class TeeWriter(object):# {{{
 		sys.stdout.flush()
 # }}}
 class DotPrinterSlots(object):
-	dotfile=DumbWriter(sys.stderr)
-	printfile=sys.stdout
+	#dotfile=DumbWriter(sys.stderr)
+	#printfile=sys.stdout
 	activeidx = None
 	slots = []
 	lockobj = None
 	init_complete = False
 	preferred_slot = None
+	write_buf = ''
 	@classmethod
 	def init(cls):
 		if not cls.init_complete:
 			Term.init()
 			Term.disableCursor()
+			cls.printfile = Term.stdout
+			cls.dotfile = DumbWriter(Term.stderr)
 			cls.init_complete = True
 	@classmethod
 	def lock(cls):
@@ -440,7 +452,7 @@ class DotPrinterSlots(object):
 		if len(cls.slots) > 0:
 			for i in range(len(cls.slots)):
 				cls.setActive(cls.slots[i])
-				cls.dotfile.write(jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']))
+				cls.dotfile.write((jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1'])).encode())
 			cls.setActive(cls.slots[0])
 		cls.slots.remove(dp)
 		#else:
@@ -460,7 +472,7 @@ class DotPrinterSlots(object):
 			if first:
 				first = False
 			else:
-				cls.dotfile.write("\n")
+				cls.dotfile.write("\n".encode())
 			x.refresh(activate=False, flush=refresh_flush)
 		if len(cls.slots) > 0:
 			cls.activeidx = len(cls.slots) - 1
@@ -478,16 +490,16 @@ class DotPrinterSlots(object):
 		cls.activeidx = cls.slots.index(dp)
 		delta = cls.activeidx - curridx
 		if delta < 0:
-			cls.dotfile.write(jlib.encapsulate_ansi('cursor_up', ["{}".format(abs(delta))]))
+			cls.dotfile.write(jlib.encapsulate_ansi('cursor_up', ["{}".format(abs(delta))]).encode())
 		elif delta > 0:
-			cls.dotfile.write(jlib.encapsulate_ansi('cursor_down', ["{}".format(delta)]))
+			cls.dotfile.write(jlib.encapsulate_ansi('cursor_down', ["{}".format(delta)]).encode())
 		if hasattr(dp, 'activation_cb'):
 			dp.activation_cb()
 	@classmethod
 	def clear(cls):
 		import jlib
 		cls.setActive(cls.slots[0])
-		cls.dotfile.write(jlib.encapsulate_ansi('erase_screen') + jlib.encapsulate_ansi('cursor_position', ['1', '1']))
+		cls.dotfile.write((jlib.encapsulate_ansi('erase_screen') + jlib.encapsulate_ansi('cursor_position', ['1', '1'])).encode())
 		cls.refresh()
 	@classmethod
 	def line(cls, *values, sep=' ', end='', file=None, printfile=True, **kwargs):
@@ -517,7 +529,10 @@ class DotPrinterSlots(object):
 		# Make sure "file" goes to where it's supposed to go, if it's not
 		# stdout or stderr.
 		if file is not None and file is not sys.stdout and file is not sys.stderr:
-			file.write(msg + "\n")
+			try:
+				file.write((msg + "\n").encode())
+			except TypeError:
+				file.write(msg + "\n")
 			return
 		if printfile:
 			print_fh = cls.printfile
@@ -527,10 +542,10 @@ class DotPrinterSlots(object):
 		if len(cls.slots) > 0:
 			cls.setActive(cls.slots[0])
 		# on "stderr", erase line, move cursor to line start, flush
-		cls.dotfile.write(jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']))
+		cls.dotfile.write((jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1'])).encode())
 		cls.dotfile.flush()
 		# on "stdout", write our line (but don't move to the next just yet), flush
-		print_fh.write(msg)
+		print_fh.write(msg.encode())
 		# Funny little workaround
 		while True:
 			try:
@@ -539,13 +554,30 @@ class DotPrinterSlots(object):
 			except IOError:
 				pass
 		# on "stderr", erase the rest of the line, flush
-		cls.dotfile.write(jlib.encapsulate_ansi('erase_line_from_cursor'))
+		cls.dotfile.write(jlib.encapsulate_ansi('erase_line_from_cursor').encode())
 		cls.dotfile.flush()
 		# on "stdout", advance to the next line, flush
-		print_fh.write("\n")
+		print_fh.write("\n".encode())
 		print_fh.flush()
 		# redraw the stack
 		cls.refresh()
+	@classmethod
+	def write(cls, text):
+		cls.write_buf += text
+		lines = cls.write_buf.splitlines(keepends=True)
+		if len(lines) > 0:
+			if not lines[-1].endswith("\n"):
+				cls.write_buf = lines.pop()
+			else:
+				cls.write_buf = ''
+			for line in lines:
+				cls.line(line.rstrip("\r\n"))
+	@classmethod
+	def flush(cls):
+		if len(cls.write_buf) > 0:
+			cls.line(cls.write_buf)
+			cls.write_buf = ''
+
 
 class FakeUpdatingLine:
 	def __init__(self, silent=False):
@@ -570,6 +602,8 @@ class UpdatingLine:
 
 	def __init__(self, update=None, line=None, justify=None, moreString=None, after=None, before=None, clear_on_close=True):
 		self.closed = False
+		if not DotPrinterSlots.init_complete:
+			DotPrinterSlots.init()
 		self.dotfile = DotPrinterSlots.dotfile
 		self.printfile = DotPrinterSlots.printfile
 		DotPrinterSlots.lock()
@@ -580,6 +614,8 @@ class UpdatingLine:
 			self.line(line)
 		if update is not None:
 			self.update(update)
+		# Added so we can write() to an UpdatingLine like a file handle.
+		self.write_buf = ''
 
 	def getJustify(self):
 		return self.justify
@@ -599,10 +635,10 @@ class UpdatingLine:
 			DotPrinterSlots.setActive(self)
 		colSize = Term.size[0]
 		#newTxt = formatLine(self.buf, colSize, self.justify, self.moreString)
-		self.dotfile.write(jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']) + jlib.encapsulate_ansi('disable_line_wrap'))
+		self.dotfile.write((jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']) + jlib.encapsulate_ansi('disable_line_wrap')).encode())
 		#self.dotfile.write(newTxt)
-		self.dotfile.write(self.buf)
-		self.dotfile.write(jlib.encapsulate_ansi('enable_line_wrap') + jlib.encapsulate_ansi('color', [jlib.ansi_colors['normal']]))
+		self.dotfile.write(self.buf.encode())
+		self.dotfile.write((jlib.encapsulate_ansi('enable_line_wrap') + jlib.encapsulate_ansi('color', [jlib.ansi_colors['normal']])).encode())
 		if flush:
 			self.dotfile.flush()
 	def update(self, txt=None, flush=True):
@@ -615,10 +651,10 @@ class UpdatingLine:
 		if txt is None:
 			txt = self.buf
 		lastLineLen = 0
-		self.dotfile.write(jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']) + jlib.encapsulate_ansi('disable_line_wrap'))
-		self.dotfile.write(txt)
-		self.dotfile.write(jlib.encapsulate_ansi('enable_line_wrap') + jlib.encapsulate_ansi('color', [jlib.ansi_colors['normal']]))
-		self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["1"]))
+		self.dotfile.write((jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']) + jlib.encapsulate_ansi('disable_line_wrap')).encode())
+		self.dotfile.write(txt.encode())
+		self.dotfile.write((jlib.encapsulate_ansi('enable_line_wrap') + jlib.encapsulate_ansi('color', [jlib.ansi_colors['normal']])).encode())
+		self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["1"]).encode())
 		if flush:
 			self.dotfile.flush()
 		self.buf = txt
@@ -629,6 +665,21 @@ class UpdatingLine:
 		DotPrinterSlots.lock()
 		DotPrinterSlots.line(*values, sep=sep, end=end, file=file, printfile=printfile)
 		DotPrinterSlots.release()
+	def write(self, text):
+		self.write_buf += text
+		lines = self.write_buf.splitlines(keepends=True)
+		if len(lines) > 0:
+			if not lines[-1].endswith("\n"):
+				self.write_buf = lines[-1]
+			else:
+				self.write_buf = ''
+			for line in lines:
+				self.line(line.rstrip("\r\n"))
+	def flush(self):
+		if len(self.write_buf) > 0:
+			self.line(self.write_buf)
+			self.write_buf = ''
+	
 	def clear(self):
 		if self.closed:
 			return
@@ -677,6 +728,8 @@ class DotPrinter(object):
 		self.countjustify = countjustify
 		# If grouping is True, commas are put in the count display.
 		self.grouping = grouping
+		if not DotPrinterSlots.init_complete:
+			DotPrinterSlots.init()
 		self.dotfile = DotPrinterSlots.dotfile
 		self.printfile = DotPrinterSlots.printfile
 		# This is the character that represents a dot!
@@ -710,7 +763,7 @@ class DotPrinter(object):
 			labelsize = len(" {}".format(self.afterlabel))
 			self.dotend -= labelsize
 
-		self.dotfile.write(jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']) + jlib.encapsulate_ansi('disable_line_wrap'))
+		self.dotfile.write((jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']) + jlib.encapsulate_ansi('disable_line_wrap')).encode())
 		if self.showcount:
 			maxcount_len = len(("{:n}" if self.grouping else "{}").format(self.maxcount))
 			if self.countjustify is not None and maxcount_len < self.countjustify:
@@ -720,14 +773,14 @@ class DotPrinter(object):
 			self.maxcountsize = maxcount_len
 			self.countstart = self.dotstart
 			self.dotstart += countsize
-			self.dotfile.write(("{:n}" if self.grouping else "{}").format(self.currcount).rjust(self.maxcountsize, ' ') + '/' + ("{:n}" if self.grouping else "{}").format(self.maxcount).rjust(self.maxcountsize, ' ') + ' ')
+			self.dotfile.write((("{:n}" if self.grouping else "{}").format(self.currcount).rjust(self.maxcountsize, ' ') + '/' + ("{:n}" if self.grouping else "{}").format(self.maxcount).rjust(self.maxcountsize, ' ') + ' ').encode())
 
 		if self.label is not None:
 			labelsize = len("{} ".format(self.label))
 			self.dotstart += labelsize
-			self.dotfile.write(self.label + ' ')
+			self.dotfile.write((self.label + ' ').encode())
 		if self.afterlabel is not None:
-			self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotend + 1)]) + ' ' + self.afterlabel)
+			self.dotfile.write((jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotend + 1)]) + ' ' + self.afterlabel).encode())
 		self.dotstoprint = self.dotend - self.dotstart - 1
 		if self.dotstoprint == 0:
 			# cop-out zero-div mitigation
@@ -748,10 +801,10 @@ class DotPrinter(object):
 			self.dotstoprint = self.maxcount
 			self.dotend = self.dotstart + self.dotstoprint + 1
 		if self.dotstoprint > 0:
-			self.dotfile.write('[')
-			self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotend)]))
-			self.dotfile.write(']')
-			self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotstart + 1)]))
+			self.dotfile.write('['.encode())
+			self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotend)]).encode())
+			self.dotfile.write(']'.encode())
+			self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotstart + 1)]).encode())
 			self.itemsperdot = (float(self.maxcount) / float(self.dotstoprint))
 			dotnum = int(self.currcount / self.itemsperdot)
 			self.dotsprinted = 0
@@ -765,9 +818,9 @@ class DotPrinter(object):
 					to_print = self.frac_dotchars[self.dotchar]
 				if self.colors:
 					fgc = colorcalc(self.dotsprinted * color_step)
-					self.dotfile.write(str(self.fgfunc(fgc, to_print)))
+					self.dotfile.write(str(self.fgfunc(fgc, to_print)).encode())
 				else:
-					self.dotfile.write(to_print)
+					self.dotfile.write(to_print.encode())
 				self.dotsprinted += 1
 			if self.frac_dots:
 				dot_remainder = self.currcount % self.itemsperdot
@@ -776,10 +829,10 @@ class DotPrinter(object):
 				if self.frac_dot_printed > -1:
 					if self.colors:
 						fgc = colorcalc(self.dotsprinted * color_step)
-						self.dotfile.write(str(self.fgfunc(fgc, self.frac_dotchars[self.frac_dot_printed])))
+						self.dotfile.write(str(self.fgfunc(fgc, self.frac_dotchars[self.frac_dot_printed])).encode())
 					else:
-						self.dotfile.write(self.frac_dotchars[self.frac_dot_printed])
-		self.dotfile.write(jlib.encapsulate_ansi('enable_line_wrap'))
+						self.dotfile.write(self.frac_dotchars[self.frac_dot_printed].encode())
+		self.dotfile.write(jlib.encapsulate_ansi('enable_line_wrap').encode())
 		if flush:
 			self.dotfile.flush()
 	def update(self, newcount, flush=True):
@@ -842,7 +895,7 @@ class DotPrinter(object):
 		DotPrinterSlots.release()
 	def activation_cb(self):
 		import jlib
-		self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotstart + 1 + self.dotsprinted)]))
+		self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', ["{}".format(self.dotstart + 1 + self.dotsprinted)]).encode())
 	def __del__(self):
 		if sys.meta_path is not None:
 			self.close()
@@ -1101,15 +1154,18 @@ class EditingLine(object):
 	# the like. The history list, however, consists of strings, because we need
 	# to calculate lengths in terms of printable characters... and at the end
 	# of the day, that's also what the user cares about and expects.
-	def __init__(self, history=[], prompt=''):
+	def __init__(self, history=[], prompt='', stdin=sys.stdin):
 		# This regex is used to cheese our ^W "kill last word" functionality...
 		import re
 		self.kill_word_pat = re.compile("^(.*\S)(\s+\S+\s*)$")
-
+		if not DotPrinterSlots.init_complete:
+			DotPrinterSlots.init()
 		self.dotfile = DotPrinterSlots.dotfile
 		self.printfile = DotPrinterSlots.printfile
+		self.stdin = stdin
 		Term.init()
 		Term.raw()
+		self.write_buf = ''
 		# Note to future self:
 		# System is not happy AT ALL if you use the call that's commented out below.
 		#Term.setblocking(False)
@@ -1175,7 +1231,7 @@ class EditingLine(object):
 		import jlib
 		# Note: module "colors" is provided by the "ansicolors" package in pip.
 		import colors, wcwidth
-		self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', [str(len(colors.strip_color(self.prompt)) + wcwidth.wcswidth(self.history[self.historypos][:self.cursorpos]) - self.linewin + 1)]))
+		self.dotfile.write(jlib.encapsulate_ansi('cursor_horizontal_absolute', [str(len(colors.strip_color(self.prompt)) + wcwidth.wcswidth(self.history[self.historypos][:self.cursorpos]) - self.linewin + 1)]).encode())
 	def refresh(self, activate=True, flush=True):
 		import jlib
 		# Note: module "colors" is provided by the "ansicolors" package in pip.
@@ -1186,7 +1242,7 @@ class EditingLine(object):
 			DotPrinterSlots.setActive(self)
 
 		# Clear the line 
-		self.dotfile.write(jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1']))
+		self.dotfile.write((jlib.encapsulate_ansi('erase_line') + jlib.encapsulate_ansi('cursor_horizontal_absolute', ['1'])).encode())
 		# If the cursor position is to the left of the visible window,
 		# jump the window back in <winscroll>-sized chunks until we reach
 		# the cursor position.
@@ -1198,7 +1254,7 @@ class EditingLine(object):
 		# jump the window forward.
 		while self.cursorpos > self.linewin + (colSize - len(colors.strip_color(self.prompt))):
 			self.linewin += self.winscroll
-		self.dotfile.write(self.prompt + self.history[self.historypos][self.linewin:self.linewin + (colSize - len(colors.strip_color(self.prompt)))])
+		self.dotfile.write((self.prompt + self.history[self.historypos][self.linewin:self.linewin + (colSize - len(colors.strip_color(self.prompt)))]).encode())
 		self.position_cursor()
 		if flush:
 			self.dotfile.flush()
@@ -1224,7 +1280,7 @@ class EditingLine(object):
 		whether or not you want to call poll() with your own calls to
 		select.select() or the like.
 		"""
-		ifh, ofh, xfh = select.select([sys.stdin.fileno()], [], [], 0)
+		ifh, ofh, xfh = select.select([self.stdin.fileno()], [], [], 0)
 		keepGoing = len(ifh) > 0
 		while keepGoing:
 			DotPrinterSlots.lock()
@@ -1339,7 +1395,7 @@ class EditingLine(object):
 						self.history[self.historypos] = new_line
 					self.refresh()
 
-			ifh, ofh, xfh = select.select([sys.stdin.fileno()], [], [], 0)
+			ifh, ofh, xfh = select.select([self.stdin.fileno()], [], [], 0)
 			keepGoing = len(ifh) > 0 and process_all_input
 		return False
 	def line(self, *values, sep=' ', end='', file=None, printfile=True, **kwargs):
